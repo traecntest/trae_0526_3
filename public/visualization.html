@@ -160,6 +160,37 @@
       const xValues = dataPoints.map(p => hasDisplacement ? (p.displacement || 0) : p.timestamp);
       const yValues = dataPoints.map(p => p.load);
 
+      let maxLoadIndex = 0;
+      let maxLoad = yValues[0];
+      let maxLoadX = xValues[0];
+      for (let i = 1; i < dataPoints.length; i++) {
+        if (yValues[i] > maxLoad) {
+          maxLoad = yValues[i];
+          maxLoadIndex = i;
+          maxLoadX = xValues[i];
+        }
+      }
+
+      let yieldPoint = null;
+      if (dataPoints.length >= 3) {
+        const firstThird = Math.floor(dataPoints.length / 3);
+        let prevSlope = null;
+        for (let i = 1; i < firstThird; i++) {
+          const slope = (yValues[i] - yValues[i - 1]) / (xValues[i] - xValues[i - 1] + 0.0001);
+          if (prevSlope !== null) {
+            const slopeChange = Math.abs((slope - prevSlope) / prevSlope);
+            if (slopeChange > 0.15 && prevSlope > 100) {
+              yieldPoint = {
+                load: yValues[i - 1],
+                displacement: xValues[i - 1]
+              };
+              break;
+            }
+          }
+          prevSlope = slope;
+        }
+      }
+
       const maxX = Math.max(...xValues) * 1.1;
       const maxY = Math.max(...yValues) * 1.1;
       const minX = 0;
@@ -239,9 +270,10 @@
       });
       ctx.stroke();
 
-      if (currentTestData.yield_load && currentTestData.yield_displacement) {
-        const yx = padding.left + (currentTestData.yield_displacement - minX) / (maxX - minX) * chartWidth;
-        const yy = padding.top + chartHeight - (currentTestData.yield_load - minY) / (maxY - minY) * chartHeight;
+      if (yieldPoint || currentTestData.yield_load) {
+        const yp = yieldPoint || { load: currentTestData.yield_load, displacement: currentTestData.yield_displacement };
+        const yx = padding.left + (yp.displacement - minX) / (maxX - minX) * chartWidth;
+        const yy = padding.top + chartHeight - (yp.load - minY) / (maxY - minY) * chartHeight;
 
         ctx.beginPath();
         ctx.arc(yx, yy, 8, 0, Math.PI * 2);
@@ -254,26 +286,25 @@
         ctx.fillStyle = '#ff9800';
         ctx.font = 'bold 12px -apple-system, sans-serif';
         ctx.textAlign = 'left';
-        ctx.fillText(`屈服点 (${currentTestData.yield_load.toFixed(1)}N, ${currentTestData.yield_displacement.toFixed(2)}mm)`, yx + 12, yy - 8);
+        ctx.fillText(`屈服点 (${yp.load.toFixed(1)}N, ${yp.displacement.toFixed(2)}mm)`, yx + 12, yy - 8);
       }
 
-      if (currentTestData.max_load && currentTestData.max_displacement) {
-        const mx = padding.left + (currentTestData.max_displacement - minX) / (maxX - minX) * chartWidth;
-        const my = padding.top + chartHeight - (currentTestData.max_load - minY) / (maxY - minY) * chartHeight;
+      const mPoint = { load: maxLoad, displacement: maxLoadX };
+      const mx = padding.left + (mPoint.displacement - minX) / (maxX - minX) * chartWidth;
+      const my = padding.top + chartHeight - (mPoint.load - minY) / (maxY - minY) * chartHeight;
 
-        ctx.beginPath();
-        ctx.arc(mx, my, 8, 0, Math.PI * 2);
-        ctx.fillStyle = '#f44336';
-        ctx.fill();
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(mx, my, 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#f44336';
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
 
-        ctx.fillStyle = '#f44336';
-        ctx.font = 'bold 12px -apple-system, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(`最大强度点 (${currentTestData.max_load.toFixed(1)}N, ${currentTestData.max_displacement.toFixed(2)}mm)`, mx + 12, my + 16);
-      }
+      ctx.fillStyle = '#f44336';
+      ctx.font = 'bold 12px -apple-system, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`最大强度点 (${mPoint.load.toFixed(1)}N, ${mPoint.displacement.toFixed(2)}mm)`, mx + 12, my + 16);
 
       ctx.fillStyle = '#333';
       ctx.font = 'bold 16px -apple-system, sans-serif';

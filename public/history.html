@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>历史数据查询 - 复合材料层间剪切强度测试平台</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app"></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script>
+    if (!checkAuth()) window.location.href = 'index.html';
+
+    const user = getCurrentUser();
+    const isAdmin = user?.role === 'admin';
+
+    const { sidebar, topbar } = renderLayout('history');
+
+    document.getElementById('app').innerHTML = `
+      <div class="main-layout">
+        ${sidebar}
+        <div class="main-content">
+          ${topbar}
+          <div class="content-card">
+            <h2 style="margin-bottom: 20px;">历史试验记录</h2>
+            <div class="search-bar">
+              <input type="date" id="startDate">
+              <input type="date" id="endDate">
+              <select id="specimenFilter">
+                <option value="">全部试样</option>
+              </select>
+              <button class="btn btn-secondary btn-sm" onclick="loadTests()">筛选</button>
+              <button class="btn btn-secondary btn-sm" onclick="resetFilters()">重置</button>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>试样编号</th>
+                    <th>材料类型</th>
+                    <th>峰值载荷(N)</th>
+                    <th>剪切强度(MPa)</th>
+                    <th>操作人</th>
+                    <th>试验时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="testsTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    async function loadSpecimens() {
+      try {
+        const result = await api.getSpecimens();
+        if (result.success) {
+          const select = document.getElementById('specimenFilter');
+          result.data.forEach(s => {
+            const option = document.createElement('option');
+            option.value = s.id;
+            option.textContent = `${s.specimen_number} - ${s.material_type}`;
+            select.appendChild(option);
+          });
+        }
+      } catch (error) {
+        console.error('加载试样列表失败:', error);
+      }
+    }
+
+    function resetFilters() {
+      document.getElementById('startDate').value = '';
+      document.getElementById('endDate').value = '';
+      document.getElementById('specimenFilter').value = '';
+      loadTests();
+    }
+
+    async function viewDetails(id) {
+      window.location.href = `visualization.html?id=${id}`;
+    }
+
+    async function deleteTest(id) {
+      if (!confirm('确定要删除该试验记录吗？此操作不可恢复！')) return;
+      
+      try {
+        const result = await api.deleteTest(id);
+        if (result.success) {
+          showToast('试验记录删除成功', 'success');
+          loadTests();
+        } else {
+          showToast(result.message, 'error');
+        }
+      } catch (error) {
+        showToast('删除失败', 'error');
+      }
+    }
+
+    async function loadTests() {
+      const params = {};
+      const startDate = document.getElementById('startDate').value;
+      const endDate = document.getElementById('endDate').value;
+      const specimenId = document.getElementById('specimenFilter').value;
+
+      if (startDate) params.start_date = startDate + 'T00:00:00';
+      if (endDate) params.end_date = endDate + 'T23:59:59';
+      if (specimenId) params.specimen_id = specimenId;
+
+      try {
+        const result = await api.getTests(params);
+        if (result.success) {
+          const table = document.getElementById('testsTable');
+          if (result.data.length === 0) {
+            table.innerHTML = '<tr><td colspan="8" class="empty-state">暂无试验记录</td></tr>';
+          } else {
+            table.innerHTML = result.data.map(test => `
+              <tr>
+                <td>#${test.id}</td>
+                <td>${test.specimen_number}</td>
+                <td>${test.material_type}</td>
+                <td>${formatNumber(test.peak_load, 2)}</td>
+                <td><strong>${formatNumber(test.shear_strength, 4)}</strong></td>
+                <td>${test.operator}</td>
+                <td>${formatDate(test.test_time)}</td>
+                <td>
+                  <div class="action-buttons">
+                    <button class="btn btn-secondary btn-sm" onclick="viewDetails(${test.id})">查看</button>
+                    ${isAdmin ? `<button class="btn btn-danger btn-sm" onclick="deleteTest(${test.id})">删除</button>` : ''}
+                  </div>
+                </td>
+              </tr>
+            `).join('');
+          }
+        }
+      } catch (error) {
+        console.error('加载试验记录失败:', error);
+        showToast('加载数据失败', 'error');
+      }
+    }
+
+    loadSpecimens();
+    loadTests();
+  </script>
+</body>
+</html>

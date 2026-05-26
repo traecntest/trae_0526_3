@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>试样管理 - 复合材料层间剪切强度测试平台</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app"></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script>
+    if (!checkAuth()) window.location.href = 'index.html';
+
+    const { sidebar, topbar } = renderLayout('specimens');
+
+    document.getElementById('app').innerHTML = `
+      <div class="main-layout">
+        ${sidebar}
+        <div class="main-content">
+          ${topbar}
+          <div class="content-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+              <h2>试样列表</h2>
+              <button class="btn btn-primary btn-sm" onclick="showModal()">+ 新增试样</button>
+            </div>
+            <div class="search-bar">
+              <input type="text" id="searchInput" placeholder="搜索试样编号或材料类型...">
+              <button class="btn btn-secondary btn-sm" onclick="loadSpecimens()">搜索</button>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>试样编号</th>
+                    <th>长度(mm)</th>
+                    <th>宽度(mm)</th>
+                    <th>厚度(mm)</th>
+                    <th>材料类型</th>
+                    <th>层数</th>
+                    <th>创建时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="specimensTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    function showModal(specimen = null) {
+      const isEdit = specimen !== null;
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>${isEdit ? '编辑试样' : '新增试样'}</h2>
+            <button class="close-btn" onclick="this.closest('.modal').remove()">&times;</button>
+          </div>
+          <form id="specimenForm">
+            <div class="form-group">
+              <label>试样编号 *</label>
+              <input type="text" id="specimen_number" value="${specimen?.specimen_number || ''}" required>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>长度 (mm) *</label>
+                <input type="number" id="length" step="0.01" min="0" value="${specimen?.length || ''}" required>
+              </div>
+              <div class="form-group">
+                <label>宽度 (mm) *</label>
+                <input type="number" id="width" step="0.01" min="0" value="${specimen?.width || ''}" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>厚度 (mm) *</label>
+                <input type="number" id="thickness" step="0.01" min="0" value="${specimen?.thickness || ''}" required>
+              </div>
+              <div class="form-group">
+                <label>层数</label>
+                <input type="number" id="layer_count" min="0" value="${specimen?.layer_count || ''}">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>材料类型 *</label>
+              <input type="text" id="material_type" value="${specimen?.material_type || ''}" required>
+            </div>
+            <div class="form-group">
+              <label>描述</label>
+              <textarea id="description" rows="2">${specimen?.description || ''}</textarea>
+            </div>
+            <div style="display: flex; gap: 12px; margin-top: 20px;">
+              <button type="submit" class="btn btn-primary">${isEdit ? '更新' : '创建'}</button>
+              <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">取消</button>
+            </div>
+          </form>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      modal.querySelector('#specimenForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const data = {
+          specimen_number: modal.querySelector('#specimen_number').value.trim(),
+          length: parseFloat(modal.querySelector('#length').value),
+          width: parseFloat(modal.querySelector('#width').value),
+          thickness: parseFloat(modal.querySelector('#thickness').value),
+          material_type: modal.querySelector('#material_type').value.trim(),
+          layer_count: parseInt(modal.querySelector('#layer_count').value) || null,
+          description: modal.querySelector('#description').value || null
+        };
+
+        try {
+          let result;
+          if (isEdit) {
+            result = await api.updateSpecimen(specimen.id, data);
+          } else {
+            result = await api.createSpecimen(data);
+          }
+
+          if (result.success) {
+            showToast(isEdit ? '试样更新成功' : '试样创建成功', 'success');
+            modal.remove();
+            loadSpecimens();
+          } else {
+            showToast(result.message, 'error');
+          }
+        } catch (error) {
+          showToast('操作失败', 'error');
+        }
+      });
+    }
+
+    async function deleteSpecimen(id) {
+      if (!confirm('确定要删除该试样吗？')) return;
+      
+      try {
+        const result = await api.deleteSpecimen(id);
+        if (result.success) {
+          showToast('试样删除成功', 'success');
+          loadSpecimens();
+        } else {
+          showToast(result.message, 'error');
+        }
+      } catch (error) {
+        showToast('删除失败', 'error');
+      }
+    }
+
+    async function loadSpecimens() {
+      const search = document.getElementById('searchInput').value.trim();
+      try {
+        const result = await api.getSpecimens(search ? { search } : {});
+        if (result.success) {
+          const table = document.getElementById('specimensTable');
+          if (result.data.length === 0) {
+            table.innerHTML = '<tr><td colspan="9" class="empty-state">暂无试样数据</td></tr>';
+          } else {
+            table.innerHTML = result.data.map(s => `
+              <tr>
+                <td>${s.id}</td>
+                <td><strong>${s.specimen_number}</strong></td>
+                <td>${formatNumber(s.length, 2)}</td>
+                <td>${formatNumber(s.width, 2)}</td>
+                <td>${formatNumber(s.thickness, 2)}</td>
+                <td>${s.material_type}</td>
+                <td>${s.layer_count || '-'}</td>
+                <td>${formatDate(s.created_at)}</td>
+                <td>
+                  <div class="action-buttons">
+                    <button class="btn btn-secondary btn-sm" onclick='showModal(${JSON.stringify(s).replace(/'/g, "&apos;")})'>编辑</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteSpecimen(${s.id})">删除</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('');
+          }
+        }
+      } catch (error) {
+        console.error('加载试样列表失败:', error);
+      }
+    }
+
+    document.getElementById('searchInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') loadSpecimens();
+    });
+
+    loadSpecimens();
+  </script>
+</body>
+</html>

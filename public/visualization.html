@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>数据可视化 - 复合材料层间剪切强度测试平台</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app"></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script>
+    if (!checkAuth()) window.location.href = 'index.html';
+
+    const { sidebar, topbar } = renderLayout('visualization');
+
+    document.getElementById('app').innerHTML = `
+      <div class="main-layout">
+        ${sidebar}
+        <div class="main-content">
+          ${topbar}
+          <div class="content-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+              <h2>载荷-位移曲线</h2>
+              <div style="display: flex; gap: 12px;">
+                <select id="testSelect" style="padding: 8px 12px; border-radius: 8px; border: 1px solid #ddd;">
+                  <option value="">选择试验...</option>
+                </select>
+                <button class="btn btn-secondary btn-sm" onclick="loadTests()">刷新列表</button>
+              </div>
+            </div>
+            <div id="testInfo" style="display: none;">
+              <div style="background: #f8f9fa; padding: 16px; border-radius: 12px; margin-bottom: 20px;">
+                <div class="form-row">
+                  <div>
+                    <strong>试样编号:</strong> <span id="infoSpecimen"></span><br>
+                    <strong>材料类型:</strong> <span id="infoMaterial"></span><br>
+                    <strong>尺寸:</strong> <span id="infoSize"></span> mm
+                  </div>
+                  <div>
+                    <strong>峰值载荷:</strong> <span id="infoPeakLoad"></span> N<br>
+                    <strong>剪切强度:</strong> <span id="infoStrength"></span> MPa<br>
+                    <strong>操作人:</strong> <span id="infoOperator"></span>
+                  </div>
+                  <div>
+                    <strong>屈服载荷:</strong> <span id="infoYield"></span> N<br>
+                    <strong>最大载荷:</strong> <span id="infoMaxLoad"></span> N<br>
+                    <strong>试验时间:</strong> <span id="infoTime"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <canvas id="chartCanvas" width="900" height="500" style="display: none;"></canvas>
+            <div id="noData" class="empty-state">
+              <div class="icon">📊</div>
+              <p>请选择一个试验记录查看曲线</p>
+            </div>
+            <div id="chartLegend" style="display: none; margin-top: 16px; padding: 12px; background: #f8f9fa; border-radius: 8px;">
+              <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <div style="width: 20px; height: 3px; background: #667eea;"></div>
+                  <span>载荷-位移曲线</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <div style="width: 12px; height: 12px; background: #ff9800; border-radius: 50%;"></div>
+                  <span>屈服点</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <div style="width: 12px; height: 12px; background: #f44336; border-radius: 50%;"></div>
+                  <span>最大强度点</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    let currentTestData = null;
+
+    async function loadTests() {
+      try {
+        const result = await api.getTests();
+        if (result.success) {
+          const select = document.getElementById('testSelect');
+          select.innerHTML = '<option value="">选择试验...</option>';
+          result.data.forEach(test => {
+            const option = document.createElement('option');
+            option.value = test.id;
+            option.textContent = `#${test.id} - ${test.specimen_number} (${test.material_type}) - ${formatDate(test.test_time)}`;
+            select.appendChild(option);
+          });
+
+          const urlParams = new URLSearchParams(window.location.search);
+          const testId = urlParams.get('id');
+          if (testId) {
+            select.value = testId;
+            loadTestData(testId);
+          }
+        }
+      } catch (error) {
+        console.error('加载试验列表失败:', error);
+      }
+    }
+
+    async function loadTestData(id) {
+      try {
+        const result = await api.getTest(id);
+        if (result.success) {
+          currentTestData = result.data;
+          displayTestInfo();
+          drawChart();
+        }
+      } catch (error) {
+        console.error('加载试验数据失败:', error);
+        showToast('加载数据失败', 'error');
+      }
+    }
+
+    function displayTestInfo() {
+      const d = currentTestData;
+      document.getElementById('testInfo').style.display = 'block';
+      document.getElementById('infoSpecimen').textContent = d.specimen_number;
+      document.getElementById('infoMaterial').textContent = d.material_type;
+      document.getElementById('infoSize').textContent = `${d.length}×${d.width}×${d.thickness}`;
+      document.getElementById('infoPeakLoad').textContent = formatNumber(d.peak_load, 2);
+      document.getElementById('infoStrength').textContent = formatNumber(d.shear_strength, 4);
+      document.getElementById('infoOperator').textContent = d.operator;
+      document.getElementById('infoYield').textContent = d.yield_load ? formatNumber(d.yield_load, 2) : '-';
+      document.getElementById('infoMaxLoad').textContent = d.max_load ? formatNumber(d.max_load, 2) : '-';
+      document.getElementById('infoTime').textContent = formatDate(d.test_time);
+    }
+
+    function drawChart() {
+      const canvas = document.getElementById('chartCanvas');
+      const ctx = canvas.getContext('2d');
+      const dataPoints = currentTestData.data_points;
+
+      if (!dataPoints || dataPoints.length === 0) {
+        document.getElementById('noData').innerHTML = '<div class="icon">⚠️</div><p>该试验没有原始数据点</p>';
+        document.getElementById('noData').style.display = 'block';
+        canvas.style.display = 'none';
+        document.getElementById('chartLegend').style.display = 'none';
+        return;
+      }
+
+      document.getElementById('noData').style.display = 'none';
+      canvas.style.display = 'block';
+      document.getElementById('chartLegend').style.display = 'block';
+
+      const width = canvas.width;
+      const height = canvas.height;
+      const padding = { top: 50, right: 50, bottom: 60, left: 80 };
+      const chartWidth = width - padding.left - padding.right;
+      const chartHeight = height - padding.top - padding.bottom;
+
+      const hasDisplacement = dataPoints.some(p => p.displacement !== null && p.displacement !== undefined);
+      const xValues = dataPoints.map(p => hasDisplacement ? (p.displacement || 0) : p.timestamp);
+      const yValues = dataPoints.map(p => p.load);
+
+      const maxX = Math.max(...xValues) * 1.1;
+      const maxY = Math.max(...yValues) * 1.1;
+      const minX = 0;
+      const minY = 0;
+
+      ctx.clearRect(0, 0, width, height);
+
+      ctx.fillStyle = '#fafafa';
+      ctx.fillRect(padding.left, padding.top, chartWidth, chartHeight);
+
+      ctx.strokeStyle = '#e0e0e0';
+      ctx.lineWidth = 1;
+      const gridLines = 10;
+      
+      for (let i = 0; i <= gridLines; i++) {
+        const y = padding.top + (chartHeight / gridLines) * i;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(padding.left + chartWidth, y);
+        ctx.stroke();
+
+        const x = padding.left + (chartWidth / gridLines) * i;
+        ctx.beginPath();
+        ctx.moveTo(x, padding.top);
+        ctx.lineTo(x, padding.top + chartHeight);
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, padding.top);
+      ctx.lineTo(padding.left, padding.top + chartHeight);
+      ctx.lineTo(padding.left + chartWidth, padding.top + chartHeight);
+      ctx.stroke();
+
+      ctx.fillStyle = '#333';
+      ctx.font = '12px -apple-system, sans-serif';
+      ctx.textAlign = 'right';
+      for (let i = 0; i <= gridLines; i++) {
+        const y = padding.top + chartHeight - (chartHeight / gridLines) * i;
+        const value = (maxY / gridLines) * i;
+        ctx.fillText(value.toFixed(0), padding.left - 10, y + 4);
+      }
+
+      ctx.textAlign = 'center';
+      for (let i = 0; i <= gridLines; i++) {
+        const x = padding.left + (chartWidth / gridLines) * i;
+        const value = (maxX / gridLines) * i;
+        ctx.fillText(value.toFixed(2), x, padding.top + chartHeight + 20);
+      }
+
+      ctx.fillStyle = '#333';
+      ctx.font = 'bold 14px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(hasDisplacement ? '位移 (mm)' : '时间 (s)', padding.left + chartWidth / 2, height - 10);
+      
+      ctx.save();
+      ctx.translate(20, padding.top + chartHeight / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText('载荷 (N)', 0, 0);
+      ctx.restore();
+
+      ctx.beginPath();
+      ctx.strokeStyle = '#667eea';
+      ctx.lineWidth = 2.5;
+
+      dataPoints.forEach((point, index) => {
+        const x = padding.left + ((hasDisplacement ? (point.displacement || 0) : point.timestamp) - minX) / (maxX - minX) * chartWidth;
+        const y = padding.top + chartHeight - (point.load - minY) / (maxY - minY) * chartHeight;
+
+        if (index === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.stroke();
+
+      if (currentTestData.yield_load && currentTestData.yield_displacement) {
+        const yx = padding.left + (currentTestData.yield_displacement - minX) / (maxX - minX) * chartWidth;
+        const yy = padding.top + chartHeight - (currentTestData.yield_load - minY) / (maxY - minY) * chartHeight;
+
+        ctx.beginPath();
+        ctx.arc(yx, yy, 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff9800';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#ff9800';
+        ctx.font = 'bold 12px -apple-system, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`屈服点 (${currentTestData.yield_load.toFixed(1)}N, ${currentTestData.yield_displacement.toFixed(2)}mm)`, yx + 12, yy - 8);
+      }
+
+      if (currentTestData.max_load && currentTestData.max_displacement) {
+        const mx = padding.left + (currentTestData.max_displacement - minX) / (maxX - minX) * chartWidth;
+        const my = padding.top + chartHeight - (currentTestData.max_load - minY) / (maxY - minY) * chartHeight;
+
+        ctx.beginPath();
+        ctx.arc(mx, my, 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#f44336';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#f44336';
+        ctx.font = 'bold 12px -apple-system, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`最大强度点 (${currentTestData.max_load.toFixed(1)}N, ${currentTestData.max_displacement.toFixed(2)}mm)`, mx + 12, my + 16);
+      }
+
+      ctx.fillStyle = '#333';
+      ctx.font = 'bold 16px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        `${currentTestData.specimen_number} - ${currentTestData.material_type} 载荷-位移曲线`,
+        width / 2,
+        25
+      );
+    }
+
+    document.getElementById('testSelect').addEventListener('change', (e) => {
+      const id = e.target.value;
+      if (id) {
+        loadTestData(id);
+      } else {
+        currentTestData = null;
+        document.getElementById('testInfo').style.display = 'none';
+        document.getElementById('chartCanvas').style.display = 'none';
+        document.getElementById('chartLegend').style.display = 'none';
+        document.getElementById('noData').style.display = 'block';
+        document.getElementById('noData').innerHTML = '<div class="icon">📊</div><p>请选择一个试验记录查看曲线</p>';
+      }
+    });
+
+    loadTests();
+  </script>
+</body>
+</html>

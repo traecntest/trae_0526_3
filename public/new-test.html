@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>新建试验 - 复合材料层间剪切强度测试平台</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app"></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script>
+    if (!checkAuth()) window.location.href = 'index.html';
+
+    const { sidebar, topbar } = renderLayout('new-test');
+
+    document.getElementById('app').innerHTML = `
+      <div class="main-layout">
+        ${sidebar}
+        <div class="main-content">
+          ${topbar}
+          <div class="content-card">
+            <h2 style="margin-bottom: 20px;">新建层间剪切试验</h2>
+            <form id="testForm">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="specimen_id">选择试样 *</label>
+                  <select id="specimen_id" name="specimen_id" required>
+                    <option value="">请选择试样...</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>试样信息</label>
+                  <div id="specimenInfo" style="padding: 12px; background: #f8f9fa; border-radius: 8px; color: #666; font-size: 14px;">
+                    请选择试样查看详情
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="peak_load">峰值载荷 (N) *</label>
+                  <input type="number" id="peak_load" name="peak_load" step="0.01" min="0" required>
+                </div>
+                <div class="form-group">
+                  <label>剪切强度 (MPa)</label>
+                  <div id="shearStrengthDisplay" style="padding: 12px; background: #e3f2fd; border-radius: 8px; color: #1565c0; font-size: 18px; font-weight: bold;">
+                    -
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="yield_load">屈服载荷 (N)</label>
+                  <input type="number" id="yield_load" name="yield_load" step="0.01" min="0">
+                </div>
+                <div class="form-group">
+                  <label for="yield_displacement">屈服位移 (mm)</label>
+                  <input type="number" id="yield_displacement" name="yield_displacement" step="0.001" min="0">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="max_load">最大载荷 (N)</label>
+                  <input type="number" id="max_load" name="max_load" step="0.01" min="0">
+                </div>
+                <div class="form-group">
+                  <label for="max_displacement">最大位移 (mm)</label>
+                  <input type="number" id="max_displacement" name="max_displacement" step="0.001" min="0">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="displacement_at_peak">峰值时位移 (mm)</label>
+                  <input type="number" id="displacement_at_peak" name="displacement_at_peak" step="0.001" min="0">
+                </div>
+                <div class="form-group">
+                  <label for="remarks">备注</label>
+                  <input type="text" id="remarks" name="remarks" placeholder="试验备注信息...">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="dataPointsInput">原始数据点 (时间戳,载荷,位移 - 每行一个)</label>
+                <textarea id="dataPointsInput" rows="6" placeholder="示例:&#10;0,0,0&#10;0.5,120.5,0.12&#10;1.0,250.3,0.25&#10;1.5,380.7,0.38&#10;2.0,450.2,0.52"></textarea>
+                <small style="color: #999;">格式: 时间戳(s),载荷(N),位移(mm)</small>
+              </div>
+
+              <div style="display: flex; gap: 12px; margin-top: 24px;">
+                <button type="submit" class="btn btn-primary" id="submitBtn">提交试验记录</button>
+                <button type="button" class="btn btn-secondary" onclick="window.location.href='dashboard.html'">返回</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    `;
+
+    let currentSpecimens = [];
+
+    async function loadSpecimens() {
+      try {
+        const result = await api.getSpecimens();
+        if (result.success) {
+          currentSpecimens = result.data;
+          const select = document.getElementById('specimen_id');
+          currentSpecimens.forEach(s => {
+            const option = document.createElement('option');
+            option.value = s.id;
+            option.textContent = `${s.specimen_number} - ${s.material_type} (${s.width}×${s.thickness}mm)`;
+            select.appendChild(option);
+          });
+        }
+      } catch (error) {
+        console.error('加载试样列表失败:', error);
+      }
+    }
+
+    function calculateShearStrength() {
+      const specimenId = document.getElementById('specimen_id').value;
+      const peakLoad = parseFloat(document.getElementById('peak_load').value);
+      const display = document.getElementById('shearStrengthDisplay');
+
+      if (specimenId && peakLoad > 0) {
+        const specimen = currentSpecimens.find(s => s.id == specimenId);
+        if (specimen) {
+          const strength = (peakLoad * 0.75) / (specimen.width * specimen.thickness);
+          display.textContent = strength.toFixed(4) + ' MPa';
+          return;
+        }
+      }
+      display.textContent = '-';
+    }
+
+    function updateSpecimenInfo() {
+      const specimenId = document.getElementById('specimen_id').value;
+      const infoDiv = document.getElementById('specimenInfo');
+
+      if (specimenId) {
+        const specimen = currentSpecimens.find(s => s.id == specimenId);
+        if (specimen) {
+          infoDiv.innerHTML = `
+            <strong>编号:</strong> ${specimen.specimen_number}<br>
+            <strong>材料:</strong> ${specimen.material_type}<br>
+            <strong>尺寸:</strong> ${specimen.length} × ${specimen.width} × ${specimen.thickness} mm
+            ${specimen.layer_count ? `<br><strong>层数:</strong> ${specimen.layer_count}` : ''}
+          `;
+        }
+      } else {
+        infoDiv.textContent = '请选择试样查看详情';
+      }
+      calculateShearStrength();
+    }
+
+    function parseDataPoints(text) {
+      const points = [];
+      const lines = text.trim().split('\n');
+      for (const line of lines) {
+        const parts = line.split(',').map(s => parseFloat(s.trim()));
+        if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+          points.push({
+            timestamp: parts[0],
+            load: parts[1],
+            displacement: parts.length >= 3 ? parts[2] : null
+          });
+        }
+      }
+      return points;
+    }
+
+    document.getElementById('specimen_id').addEventListener('change', updateSpecimenInfo);
+    document.getElementById('peak_load').addEventListener('input', calculateShearStrength);
+
+    document.getElementById('testForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const submitBtn = document.getElementById('submitBtn');
+      submitBtn.disabled = true;
+      submitBtn.textContent = '提交中...';
+
+      const dataPointsText = document.getElementById('dataPointsInput').value;
+      const data_points = parseDataPoints(dataPointsText);
+
+      const testData = {
+        specimen_id: parseInt(document.getElementById('specimen_id').value),
+        peak_load: parseFloat(document.getElementById('peak_load').value),
+        yield_load: parseFloat(document.getElementById('yield_load').value) || null,
+        yield_displacement: parseFloat(document.getElementById('yield_displacement').value) || null,
+        max_load: parseFloat(document.getElementById('max_load').value) || null,
+        max_displacement: parseFloat(document.getElementById('max_displacement').value) || null,
+        displacement_at_peak: parseFloat(document.getElementById('displacement_at_peak').value) || null,
+        remarks: document.getElementById('remarks').value || null,
+        data_points: data_points
+      };
+
+      try {
+        const result = await api.createTest(testData);
+        if (result.success) {
+          showToast('试验记录创建成功！剪切强度: ' + result.data.shear_strength.toFixed(4) + ' MPa', 'success');
+          setTimeout(() => {
+            window.location.href = 'visualization.html?id=' + result.data.id;
+          }, 1500);
+        } else {
+          showToast(result.message, 'error');
+        }
+      } catch (error) {
+        showToast('提交失败，请检查网络连接', 'error');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '提交试验记录';
+      }
+    });
+
+    loadSpecimens();
+  </script>
+</body>
+</html>

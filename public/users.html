@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>用户管理 - 复合材料层间剪切强度测试平台</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app"></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script>
+    if (!checkAuth()) window.location.href = 'index.html';
+
+    const user = getCurrentUser();
+    if (!user || user.role !== 'admin') {
+      showToast('需要管理员权限', 'error');
+      setTimeout(() => {
+        window.location.href = 'dashboard.html';
+      }, 1500);
+    }
+
+    const { sidebar, topbar } = renderLayout('users');
+
+    document.getElementById('app').innerHTML = `
+      <div class="main-layout">
+        ${sidebar}
+        <div class="main-content">
+          ${topbar}
+          <div class="content-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+              <h2>用户管理</h2>
+              <button class="btn btn-primary btn-sm" onclick="showModal()">+ 新增用户</button>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>用户名</th>
+                    <th>角色</th>
+                    <th>创建时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="usersTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    function showModal(userData = null) {
+      const isEdit = userData !== null;
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>${isEdit ? '编辑用户' : '新增用户'}</h2>
+            <button class="close-btn" onclick="this.closest('.modal').remove()">&times;</button>
+          </div>
+          <form id="userForm">
+            ${!isEdit ? `
+              <div class="form-group">
+                <label>用户名 *</label>
+                <input type="text" id="username" required>
+              </div>
+            ` : ''}
+            <div class="form-group">
+              <label>角色</label>
+              <select id="role">
+                <option value="tester" ${userData?.role === 'tester' ? 'selected' : ''}>实验员</option>
+                <option value="admin" ${userData?.role === 'admin' ? 'selected' : ''}>管理员</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>密码 ${isEdit ? '(留空不修改)' : '*'}</label>
+              <input type="password" id="password" ${!isEdit ? 'required' : ''}>
+            </div>
+            <div style="display: flex; gap: 12px; margin-top: 20px;">
+              <button type="submit" class="btn btn-primary">${isEdit ? '更新' : '创建'}</button>
+              <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">取消</button>
+            </div>
+          </form>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      modal.querySelector('#userForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const data = {
+          role: modal.querySelector('#role').value
+        };
+
+        if (!isEdit) {
+          data.username = modal.querySelector('#username').value.trim();
+          data.password = modal.querySelector('#password').value;
+        } else {
+          const password = modal.querySelector('#password').value;
+          if (password) data.password = password;
+        }
+
+        try {
+          let result;
+          if (isEdit) {
+            result = await api.updateUser(userData.id, data);
+          } else {
+            result = await api.createUser(data);
+          }
+
+          if (result.success) {
+            showToast(isEdit ? '用户更新成功' : '用户创建成功', 'success');
+            modal.remove();
+            loadUsers();
+          } else {
+            showToast(result.message, 'error');
+          }
+        } catch (error) {
+          showToast('操作失败', 'error');
+        }
+      });
+    }
+
+    async function deleteUser(id) {
+      if (!confirm('确定要删除该用户吗？')) return;
+      
+      try {
+        const result = await api.deleteUser(id);
+        if (result.success) {
+          showToast('用户删除成功', 'success');
+          loadUsers();
+        } else {
+          showToast(result.message, 'error');
+        }
+      } catch (error) {
+        showToast('删除失败', 'error');
+      }
+    }
+
+    async function loadUsers() {
+      try {
+        const result = await api.getUsers();
+        if (result.success) {
+          const table = document.getElementById('usersTable');
+          const currentUser = getCurrentUser();
+          
+          table.innerHTML = result.data.map(u => `
+            <tr>
+              <td>${u.id}</td>
+              <td><strong>${u.username}</strong></td>
+              <td>
+                <span class="badge ${u.role === 'admin' ? 'badge-admin' : 'badge-tester'}">
+                  ${u.role === 'admin' ? '管理员' : '实验员'}
+                </span>
+              </td>
+              <td>${formatDate(u.created_at)}</td>
+              <td>
+                <div class="action-buttons">
+                  <button class="btn btn-secondary btn-sm" onclick='showModal(${JSON.stringify(u)})'>编辑</button>
+                  ${u.id !== currentUser.id ? `<button class="btn btn-danger btn-sm" onclick="deleteUser(${u.id})">删除</button>` : ''}
+                </div>
+              </td>
+            </tr>
+          `).join('');
+        }
+      } catch (error) {
+        console.error('加载用户列表失败:', error);
+        showToast('加载数据失败', 'error');
+      }
+    }
+
+    loadUsers();
+  </script>
+</body>
+</html>

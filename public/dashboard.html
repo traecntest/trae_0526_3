@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>仪表盘 - 复合材料层间剪切强度测试平台</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app"></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script>
+    if (!checkAuth()) window.location.href = 'index.html';
+
+    const { sidebar, topbar } = renderLayout('dashboard');
+
+    document.getElementById('app').innerHTML = `
+      <div class="main-layout">
+        ${sidebar}
+        <div class="main-content">
+          ${topbar}
+          <div class="stats-grid" id="statsGrid"></div>
+          <div class="content-card">
+            <h2 style="margin-bottom: 16px;">最近试验记录</h2>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>试验编号</th>
+                    <th>试样编号</th>
+                    <th>材料类型</th>
+                    <th>峰值载荷(N)</th>
+                    <th>剪切强度(MPa)</th>
+                    <th>操作人</th>
+                    <th>试验时间</th>
+                  </tr>
+                </thead>
+                <tbody id="recentTestsTable"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="content-card">
+            <h2 style="margin-bottom: 16px;">材料类型统计</h2>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>材料类型</th>
+                    <th>试验次数</th>
+                    <th>平均强度(MPa)</th>
+                    <th>最大强度(MPa)</th>
+                    <th>最小强度(MPa)</th>
+                  </tr>
+                </thead>
+                <tbody id="materialStatsTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    async function loadDashboard() {
+      try {
+        const result = await api.getStats();
+        
+        if (result.success) {
+          const { summary, recent_tests, material_stats } = result.data;
+          
+          document.getElementById('statsGrid').innerHTML = `
+            <div class="stat-card">
+              <h3>总试验次数</h3>
+              <div class="value">${summary.total_tests}</div>
+            </div>
+            <div class="stat-card green">
+              <h3>试样总数</h3>
+              <div class="value">${summary.total_specimens}</div>
+            </div>
+            <div class="stat-card orange">
+              <h3>平均剪切强度</h3>
+              <div class="value">${formatNumber(summary.avg_strength, 4)}<span class="unit">MPa</span></div>
+            </div>
+            <div class="stat-card red">
+              <h3>最大剪切强度</h3>
+              <div class="value">${formatNumber(summary.max_strength, 4)}<span class="unit">MPa</span></div>
+            </div>
+          `;
+
+          const recentTable = document.getElementById('recentTestsTable');
+          if (recent_tests.length === 0) {
+            recentTable.innerHTML = '<tr><td colspan="7" class="empty-state">暂无试验记录</td></tr>';
+          } else {
+            recentTable.innerHTML = recent_tests.map(test => `
+              <tr>
+                <td>#${test.id}</td>
+                <td>${test.specimen_number}</td>
+                <td>${test.material_type}</td>
+                <td>${formatNumber(test.peak_load, 2)}</td>
+                <td>${formatNumber(test.shear_strength, 4)}</td>
+                <td>${test.operator}</td>
+                <td>${formatDate(test.test_time)}</td>
+              </tr>
+            `).join('');
+          }
+
+          const materialTable = document.getElementById('materialStatsTable');
+          if (material_stats.length === 0) {
+            materialTable.innerHTML = '<tr><td colspan="5" class="empty-state">暂无统计数据</td></tr>';
+          } else {
+            materialTable.innerHTML = material_stats.map(stat => `
+              <tr>
+                <td>${stat.material_type}</td>
+                <td>${stat.test_count}</td>
+                <td>${formatNumber(stat.avg_strength, 4)}</td>
+                <td>${formatNumber(stat.max_strength, 4)}</td>
+                <td>${formatNumber(stat.min_strength, 4)}</td>
+              </tr>
+            `).join('');
+          }
+        }
+      } catch (error) {
+        console.error('加载仪表盘数据失败:', error);
+        showToast('加载数据失败', 'error');
+      }
+    }
+
+    loadDashboard();
+  </script>
+</body>
+</html>

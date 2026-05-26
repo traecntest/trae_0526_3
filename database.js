@@ -1,15 +1,39 @@
-const Database = require('better-sqlite3');
+const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const bcrypt = require('bcryptjs');
 
 const dbPath = path.join(__dirname, 'test_platform.db');
-const db = new Database(dbPath);
+const db = new sqlite3.Database(dbPath);
 
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+function run(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function(err) {
+      if (err) reject(err);
+      else resolve({ lastID: this.lastID, changes: this.changes });
+    });
+  });
+}
+
+function get(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) reject(err);
+      else resolve(row);
+    });
+  });
+}
+
+function all(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
+    });
+  });
+}
 
 function initDatabase() {
-  db.exec(`
+  const initSQL = `
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
@@ -60,14 +84,23 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_test_records_specimen_id ON test_records(specimen_id);
     CREATE INDEX IF NOT EXISTS idx_test_records_user_id ON test_records(user_id);
     CREATE INDEX IF NOT EXISTS idx_test_records_test_time ON test_records(test_time);
-  `);
+  `;
 
-  const adminCheck = db.prepare('SELECT COUNT(*) as count FROM users WHERE username = ?').get('admin');
-  if (adminCheck.count === 0) {
-    const hash = bcrypt.hashSync('admin123', 10);
-    db.prepare('INSERT INTO users (username, password, role) VALUES (?, ?, ?)').run('admin', hash, 'admin');
-    console.log('默认管理员账户已创建: admin / admin123');
-  }
+  db.serialize(async () => {
+    db.exec('PRAGMA foreign_keys = ON');
+    
+    const statements = initSQL.split(';').filter(s => s.trim());
+    for (const sql of statements) {
+      await run(sql);
+    }
+
+    const adminCheck = await get('SELECT COUNT(*) as count FROM users WHERE username = ?', ['admin']);
+    if (adminCheck.count === 0) {
+      const hash = bcrypt.hashSync('admin123', 10);
+      await run('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', ['admin', hash, 'admin']);
+      console.log('默认管理员账户已创建: admin / admin123');
+    }
+  });
 }
 
-module.exports = { db, initDatabase };
+module.exports = { db, run, get, all, initDatabase };

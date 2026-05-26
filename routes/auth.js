@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { db } = require('../database');
+const { get } = require('../database');
 
 const router = express.Router();
 const JWT_SECRET = 'composite-shear-test-secret-key-2024';
@@ -30,40 +30,45 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ success: false, message: '用户名和密码不能为空' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  try {
+    const user = await get('SELECT * FROM users WHERE username = ?', [username]);
 
-  if (!user) {
-    return res.status(401).json({ success: false, message: '用户名或密码错误' });
-  }
-
-  const isValid = bcrypt.compareSync(password, user.password);
-  if (!isValid) {
-    return res.status(401).json({ success: false, message: '用户名或密码错误' });
-  }
-
-  const token = jwt.sign(
-    { id: user.id, username: user.username, role: user.role },
-    JWT_SECRET,
-    { expiresIn: '24h' }
-  );
-
-  res.json({
-    success: true,
-    message: '登录成功',
-    token,
-    user: {
-      id: user.id,
-      username: user.username,
-      role: user.role
+    if (!user) {
+      return res.status(401).json({ success: false, message: '用户名或密码错误' });
     }
-  });
+
+    const isValid = bcrypt.compareSync(password, user.password);
+    if (!isValid) {
+      return res.status(401).json({ success: false, message: '用户名或密码错误' });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      message: '登录成功',
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('登录错误:', error);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
 });
 
 router.get('/me', authenticateToken, (req, res) => {
@@ -77,7 +82,7 @@ router.get('/me', authenticateToken, (req, res) => {
   });
 });
 
-router.post('/change-password', authenticateToken, (req, res) => {
+router.post('/change-password', authenticateToken, async (req, res) => {
   const { oldPassword, newPassword } = req.body;
 
   if (!oldPassword || !newPassword) {
@@ -88,17 +93,23 @@ router.post('/change-password', authenticateToken, (req, res) => {
     return res.status(400).json({ success: false, message: '新密码长度至少6位' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  const isValid = bcrypt.compareSync(oldPassword, user.password);
+  try {
+    const { run } = require('../database');
+    const user = await get('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    const isValid = bcrypt.compareSync(oldPassword, user.password);
 
-  if (!isValid) {
-    return res.status(401).json({ success: false, message: '原密码错误' });
+    if (!isValid) {
+      return res.status(401).json({ success: false, message: '原密码错误' });
+    }
+
+    const hash = bcrypt.hashSync(newPassword, 10);
+    await run('UPDATE users SET password = ? WHERE id = ?', [hash, req.user.id]);
+
+    res.json({ success: true, message: '密码修改成功' });
+  } catch (error) {
+    console.error('修改密码错误:', error);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
   }
-
-  const hash = bcrypt.hashSync(newPassword, 10);
-  db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hash, req.user.id);
-
-  res.json({ success: true, message: '密码修改成功' });
 });
 
 module.exports = { router, authenticateToken, requireAdmin, JWT_SECRET };
